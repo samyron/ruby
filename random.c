@@ -1751,11 +1751,17 @@ random_s_rand(int argc, VALUE *argv, VALUE obj)
 #   define BIG_ENDIAN    4321
 # endif
 #endif
-#include "siphash.c"
+
+#define XXH_STATIC_LINKING_ONLY /* access advanced declarations */
+#define XXH_IMPLEMENTATION      /* access definitions */
+
+#include "xxhash.h"
+
 
 typedef struct {
     st_index_t hash;
-    uint8_t sip[16];
+    uint8_t secret[XXH3_SECRET_SIZE_MIN];
+    uint64_t seed;
 } hash_salt_t;
 
 static union {
@@ -1766,10 +1772,18 @@ static union {
 static void
 init_hash_salt(struct MT *mt)
 {
+    uint32_t secret[(XXH3_SECRET_SIZE_MIN*2) / sizeof(uint32_t)];
     int i;
+    for (i = 0; i < (int) ((XXH3_SECRET_SIZE_MIN*2) / sizeof(uint32_t)); ++i)
+        secret[i] = genrand_int32(mt);
 
-    for (i = 0; i < numberof(hash_salt.u32); ++i)
-        hash_salt.u32[i] = genrand_int32(mt);
+    hash_salt.key.seed = ((uint64_t) genrand_int32(mt)) << 32 | genrand_int32(mt);
+
+    XXH_errorcode res = XXH3_generateSecret(hash_salt.key.secret, XXH3_SECRET_SIZE_MIN, secret, sizeof(secret));
+    explicit_bzero(secret, sizeof(secret));
+    if (res != XXH_OK) {
+        rb_fatal("XXH3_generateSecret failed: %d", res);
+    }
 }
 
 NO_SANITIZE("unsigned-integer-overflow", extern st_index_t rb_hash_start(st_index_t h));
@@ -1782,11 +1796,11 @@ rb_hash_start(st_index_t h)
 st_index_t
 rb_memhash(const void *ptr, long len)
 {
-    sip_uint64_t h = sip_hash13(hash_salt.key.sip, ptr, len);
+    uint64_t h = XXH3_64bits_withSecretandSeed(ptr, (size_t)len, hash_salt.key.secret, XXH3_SECRET_SIZE_MIN, hash_salt.key.seed);
 #ifdef HAVE_UINT64_T
     return (st_index_t)h;
 #else
-    return (st_index_t)(h.u32[0] ^ h.u32[1]);
+    return (st_index_t)((h >> 32) ^ (h & 0xFFFFFFFF));
 #endif
 }
 
