@@ -1751,11 +1751,11 @@ random_s_rand(int argc, VALUE *argv, VALUE obj)
 #   define BIG_ENDIAN    4321
 # endif
 #endif
-#include "siphash.c"
+#include "rapidhash.h"
 
 typedef struct {
     st_index_t hash;
-    uint8_t sip[16];
+    uint64_t seed;
 } hash_salt_t;
 
 static union {
@@ -1782,11 +1782,11 @@ rb_hash_start(st_index_t h)
 st_index_t
 rb_memhash(const void *ptr, long len)
 {
-    sip_uint64_t h = sip_hash13(hash_salt.key.sip, ptr, len);
+    uint64_t h = rapidhash_withSeed(ptr, len, hash_salt.key.seed);
 #ifdef HAVE_UINT64_T
     return (st_index_t)h;
 #else
-    return (st_index_t)(h.u32[0] ^ h.u32[1]);
+    return (st_index_t)((h >> 32) ^ (h & 0xFFFFFFFF));
 #endif
 }
 
